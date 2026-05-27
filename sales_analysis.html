@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>売上分析ダッシュボード</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Meiryo, sans-serif; background: #f0f2f5; color: #333; }
+  header { background: #1a237e; color: #fff; padding: 16px 32px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 20px; font-weight: 600; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px 20px; }
+
+  /* Upload area */
+  .upload-section { background: #fff; border-radius: 12px; padding: 32px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+  .upload-section h2 { font-size: 16px; margin-bottom: 16px; color: #1a237e; }
+  .drop-zone {
+    border: 2px dashed #90a4ae; border-radius: 10px; padding: 40px 20px;
+    text-align: center; cursor: pointer; transition: all .2s;
+    background: #fafafa;
+  }
+  .drop-zone:hover, .drop-zone.dragover { border-color: #1a237e; background: #e8eaf6; }
+  .drop-zone .icon { font-size: 40px; margin-bottom: 10px; }
+  .drop-zone p { color: #546e7a; font-size: 14px; margin-top: 6px; }
+  .drop-zone input[type=file] { display: none; }
+  .file-label { display: inline-block; margin-top: 12px; padding: 8px 20px; background: #1a237e; color: #fff; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  .file-label:hover { background: #283593; }
+  .file-info { margin-top: 12px; font-size: 13px; color: #2e7d32; font-weight: 500; }
+  .security-note { margin-top: 12px; font-size: 12px; color: #78909c; display: flex; align-items: center; gap: 6px; }
+
+  /* Controls */
+  .controls { background: #fff; border-radius: 12px; padding: 20px 24px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,.08); display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+  .controls label { font-size: 14px; font-weight: 500; color: #546e7a; margin-right: 6px; }
+  .controls select, .controls input[type=number] {
+    padding: 8px 12px; border: 1px solid #cfd8dc; border-radius: 6px;
+    font-size: 14px; background: #fff; cursor: pointer;
+  }
+  .controls select:focus, .controls input[type=number]:focus { outline: none; border-color: #1a237e; }
+  .top-n-group { display: flex; align-items: center; gap: 8px; }
+
+  /* Charts grid */
+  .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 900px) { .charts-grid { grid-template-columns: 1fr; } }
+  .chart-card { background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+  .chart-card h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: #1a237e; border-left: 4px solid #1a237e; padding-left: 10px; }
+  .chart-card.full-width { grid-column: 1 / -1; }
+  .chart-wrap { position: relative; }
+
+  /* Empty state */
+  .empty-state { text-align: center; padding: 80px 20px; color: #90a4ae; }
+  .empty-state .icon { font-size: 60px; margin-bottom: 16px; }
+  .empty-state p { font-size: 16px; }
+
+  /* Summary cards */
+  .summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .summary-card { background: #fff; border-radius: 10px; padding: 16px 20px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+  .summary-card .label { font-size: 12px; color: #78909c; margin-bottom: 4px; }
+  .summary-card .value { font-size: 20px; font-weight: 700; color: #1a237e; }
+  .summary-card .sub { font-size: 12px; color: #90a4ae; margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <span style="font-size:24px">📊</span>
+  <h1>売上分析ダッシュボード</h1>
+</header>
+
+<div class="container">
+
+  <!-- Upload -->
+  <div class="upload-section">
+    <h2>データファイル読み込み</h2>
+    <div class="drop-zone" id="dropZone">
+      <div class="icon">📂</div>
+      <strong>CSVファイルをここにドラッグ＆ドロップ</strong>
+      <p>または下のボタンから選択してください</p>
+      <label class="file-label">
+        ファイルを選択
+        <input type="file" id="fileInput" accept=".csv">
+      </label>
+    </div>
+    <div class="file-info" id="fileInfo"></div>
+    <div class="security-note">🔒 アップロードされたデータはブラウザ内のみで処理され、外部サーバーには一切送信されません。</div>
+  </div>
+
+  <!-- Controls (hidden until data loaded) -->
+  <div class="controls" id="controls" style="display:none">
+    <div>
+      <label for="metricSelect">集計項目</label>
+      <select id="metricSelect">
+        <option value="P">受注金額合計</option>
+        <option value="Q">受注金額（国内_小売業）</option>
+        <option value="R">受注金額（国内_小売業以外）</option>
+        <option value="S">受注金額（海外・国内拠点あり）</option>
+        <option value="T">受注金額（SD export）</option>
+      </select>
+    </div>
+    <div class="top-n-group">
+      <label for="topN">商品上位</label>
+      <input type="number" id="topN" value="30" min="5" max="100" style="width:72px">
+      <span style="font-size:14px;color:#546e7a">件</span>
+    </div>
+  </div>
+
+  <!-- Summary -->
+  <div class="summary-row" id="summaryRow" style="display:none">
+    <div class="summary-card">
+      <div class="label">総受注金額</div>
+      <div class="value" id="sumTotal">—</div>
+      <div class="sub" id="sumMetricLabel">受注金額合計</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">商品点数</div>
+      <div class="value" id="sumProducts">—</div>
+      <div class="sub">件</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">ブランド数</div>
+      <div class="value" id="sumBrands">—</div>
+      <div class="sub">ブランド</div>
+    </div>
+  </div>
+
+  <!-- Empty state -->
+  <div class="empty-state" id="emptyState">
+    <div class="icon">📈</div>
+    <p>CSVファイルを読み込むとグラフが表示されます</p>
+  </div>
+
+  <!-- Charts -->
+  <div class="charts-grid" id="chartsGrid" style="display:none">
+    <div class="chart-card full-width">
+      <h2 id="productChartTitle">商品名別売上 上位30件</h2>
+      <div class="chart-wrap"><canvas id="productChart"></canvas></div>
+    </div>
+    <div class="chart-card full-width">
+      <h2 id="brandChartTitle">ブランド別売上</h2>
+      <div class="chart-wrap"><canvas id="brandChart"></canvas></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ---- State ----
+let rawData = [];
+let productChart = null;
+let brandChart = null;
+
+// ---- Palette ----
+const PALETTE = [
+  '#1a237e','#283593','#3949ab','#5c6bc0','#7986cb',
+  '#0d47a1','#1565c0','#1976d2','#1e88e5','#42a5f5',
+  '#006064','#00838f','#0097a7','#00acc1','#26c6da',
+  '#1b5e20','#2e7d32','#388e3c','#43a047','#66bb6a',
+  '#e65100','#ef6c00','#f57c00','#fb8c00','#ffa726',
+  '#b71c1c','#c62828','#d32f2f','#e53935','#ef5350',
+];
+
+// ---- Helpers ----
+function parseYen(str) {
+  if (!str || str.trim() === '' || str.trim() === '-') return 0;
+  return parseInt(str.replace(/[¥,\s]/g, ''), 10) || 0;
+}
+
+function formatYen(n) {
+  return '¥' + Math.round(n).toLocaleString('ja-JP');
+}
+
+function getMetricIndex(key) {
+  // 0-based from header: P=15, Q=16, R=17, S=18, T=19
+  return { P: 15, Q: 16, R: 17, S: 18, T: 19 }[key];
+}
+
+function currentMetric() { return document.getElementById('metricSelect').value; }
+function currentTopN()   { return parseInt(document.getElementById('topN').value) || 30; }
+
+// ---- CSV Parse (RFC 4180 compatible) ----
+function parseCSV(text) {
+  const rows = [];
+  let i = 0;
+  while (i < text.length) {
+    const row = [];
+    while (i < text.length) {
+      if (text[i] === '"') {
+        // quoted field
+        let field = '';
+        i++; // skip opening quote
+        while (i < text.length) {
+          if (text[i] === '"' && text[i+1] === '"') { field += '"'; i += 2; }
+          else if (text[i] === '"') { i++; break; }
+          else { field += text[i++]; }
+        }
+        row.push(field);
+        if (text[i] === ',') i++;
+        else break;
+      } else {
+        let field = '';
+        while (i < text.length && text[i] !== ',' && text[i] !== '\n' && text[i] !== '\r') {
+          field += text[i++];
+        }
+        row.push(field.trim());
+        if (text[i] === ',') i++;
+        else break;
+      }
+    }
+    // consume line ending
+    if (text[i] === '\r') i++;
+    if (text[i] === '\n') i++;
+    if (row.length > 1 || row[0] !== '') rows.push(row);
+  }
+  return rows;
+}
+
+// ---- Load file ----
+function loadFile(file) {
+  if (!file || !file.name.toLowerCase().endsWith('.csv')) {
+    alert('CSVファイルを選択してください。');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      processCSV(e.target.result, file.name);
+    } catch(err) {
+      alert('ファイルの読み込みに失敗しました: ' + err.message);
+    }
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+function processCSV(text, filename) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) { alert('データが見つかりませんでした。'); return; }
+
+  // Skip header row(s): find first row where col[0] is numeric (data row)
+  let dataStart = 1;
+  for (let i = 0; i < rows.length; i++) {
+    if (/^\d+$/.test(rows[i][0])) { dataStart = i; break; }
+  }
+
+  rawData = rows.slice(dataStart).filter(r => r.length > 19 && r[2]);
+
+  document.getElementById('fileInfo').textContent = `✔ ${filename}  （${rawData.length.toLocaleString()} 件読み込み完了）`;
+  document.getElementById('controls').style.display = 'flex';
+  document.getElementById('summaryRow').style.display = 'grid';
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('chartsGrid').style.display = 'grid';
+
+  renderAll();
+}
+
+// ---- Aggregate ----
+function aggregateProducts(metric, topN) {
+  const idx = getMetricIndex(metric);
+  const map = {};
+  for (const row of rawData) {
+    const name = row[2] || '不明';
+    const val  = parseYen(row[idx]);
+    map[name]  = (map[name] || 0) + val;
+  }
+  return Object.entries(map)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topN);
+}
+
+function aggregateBrands(metric) {
+  const idx = getMetricIndex(metric);
+  const map = {};
+  for (const row of rawData) {
+    const brand = row[4] || '不明';
+    const val   = parseYen(row[idx]);
+    map[brand]  = (map[brand] || 0) + val;
+  }
+  return Object.entries(map).sort((a, b) => b[1] - a[1]);
+}
+
+// ---- Render ----
+const METRIC_LABELS = {
+  P: '受注金額合計',
+  Q: '受注金額（国内_小売業）',
+  R: '受注金額（国内_小売業以外）',
+  S: '受注金額（海外・国内拠点あり）',
+  T: '受注金額（SD export）',
+};
+
+function renderAll() {
+  const metric = currentMetric();
+  const topN   = currentTopN();
+  const label  = METRIC_LABELS[metric];
+
+  // Summary
+  const idx = getMetricIndex(metric);
+  const total = rawData.reduce((s, r) => s + parseYen(r[idx]), 0);
+  const brands = new Set(rawData.map(r => r[4])).size;
+  document.getElementById('sumTotal').textContent = formatYen(total);
+  document.getElementById('sumProducts').textContent = rawData.length.toLocaleString();
+  document.getElementById('sumBrands').textContent = brands.toLocaleString();
+  document.getElementById('sumMetricLabel').textContent = label;
+
+  // Products chart
+  const prodData = aggregateProducts(metric, topN);
+  document.getElementById('productChartTitle').textContent = `商品名別売上 上位${topN}件（${label}）`;
+  renderBar('productChart', productChart,
+    prodData.map(([n]) => n),
+    prodData.map(([, v]) => v),
+    label,
+    (c) => { productChart = c; },
+    true
+  );
+
+  // Brand chart
+  const brandData = aggregateBrands(metric);
+  document.getElementById('brandChartTitle').textContent = `ブランド別売上（${label}）`;
+  renderBar('brandChart', brandChart,
+    brandData.map(([n]) => n),
+    brandData.map(([, v]) => v),
+    label,
+    (c) => { brandChart = c; },
+    false
+  );
+}
+
+function renderBar(canvasId, existingChart, labels, values, metricLabel, setter, truncate) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  if (existingChart) existingChart.destroy();
+
+  // Truncate long labels
+  const displayLabels = truncate
+    ? labels.map(l => l.length > 40 ? l.slice(0, 38) + '…' : l)
+    : labels.map(l => l.length > 30 ? l.slice(0, 28) + '…' : l);
+
+  const colors = labels.map((_, i) => PALETTE[i % PALETTE.length]);
+
+  const dynamicHeight = Math.max(400, labels.length * 28);
+  document.getElementById(canvasId).style.height = dynamicHeight + 'px';
+  document.getElementById(canvasId).height = dynamicHeight;
+
+  const chart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: displayLabels,
+      datasets: [{
+        label: metricLabel,
+        data: values,
+        backgroundColor: colors,
+        borderRadius: 4,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ' ' + formatYen(ctx.parsed.x),
+            title: ctx => labels[ctx[0].dataIndex],
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: {
+            callback: v => '¥' + (v >= 1_000_000 ? (v/1_000_000).toFixed(1)+'M'
+                              : v >= 1_000 ? (v/1_000).toFixed(0)+'K' : v),
+            font: { size: 11 }
+          },
+          grid: { color: '#eceff1' }
+        },
+        y: {
+          ticks: { font: { size: 11 } },
+          grid: { display: false }
+        }
+      }
+    }
+  });
+  setter(chart);
+}
+
+// ---- Events ----
+document.getElementById('metricSelect').addEventListener('change', () => { if (rawData.length) renderAll(); });
+document.getElementById('topN').addEventListener('change', () => { if (rawData.length) renderAll(); });
+document.getElementById('fileInput').addEventListener('change', e => loadFile(e.target.files[0]));
+
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  loadFile(e.dataTransfer.files[0]);
+});
+dropZone.addEventListener('click', e => {
+  if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'LABEL') {
+    document.getElementById('fileInput').click();
+  }
+});
+</script>
+</body>
+</html>
