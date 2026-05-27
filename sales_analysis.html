@@ -253,8 +253,13 @@ function parseYen(str) {
   if (!str || str.trim() === '' || str.trim() === '-') return 0;
   return parseInt(str.replace(/[¥,\s]/g, ''), 10) || 0;
 }
+function parseNum(str) {
+  if (!str || str.trim() === '' || str.trim() === '-') return 0;
+  return parseInt(str.replace(/[,\s]/g, ''), 10) || 0;
+}
 function formatYen(n) { return '¥' + Math.round(n).toLocaleString('ja-JP'); }
 function getMetricIndex(k) { return { P:15, Q:16, R:17, S:18, T:19 }[k]; }
+function getQuantityIndex(k) { return { P:25, Q:26, R:27, S:28, T:29 }[k]; }
 function currentMetric() { return document.getElementById('metricSelect').value; }
 function currentTopN() { return parseInt(document.getElementById('topN').value) || 30; }
 function currentMajorFilter() { return document.getElementById('majorFilter').value; }
@@ -393,49 +398,57 @@ function classifyRow(row) {
 // ====== Aggregation ======
 function aggregateProducts(metric, topN) {
   const idx = getMetricIndex(metric);
-  const map = {};
+  const qidx = getQuantityIndex(metric);
+  const map = {}, qmap = {};
   for (const row of rawData) {
     const name = row[2] || '不明';
-    map[name] = (map[name] || 0) + parseYen(row[idx]);
+    map[name]  = (map[name]  || 0) + parseYen(row[idx]);
+    qmap[name] = (qmap[name] || 0) + parseNum(row[qidx]);
   }
-  return Object.entries(map).sort((a,b) => b[1]-a[1]).slice(0, topN);
+  return Object.entries(map).sort((a,b) => b[1]-a[1]).slice(0, topN)
+    .map(([name, val]) => [name, val, qmap[name]]);
 }
 
 function aggregateBrands(metric) {
   const idx = getMetricIndex(metric);
-  const sums = {}, labels = {};
+  const qidx = getQuantityIndex(metric);
+  const sums = {}, qtys = {}, labels = {};
   for (const row of rawData) {
     const b = row[4] || '不明';
     const key = b.toLowerCase();
     if (!labels[key]) labels[key] = b;
     sums[key] = (sums[key] || 0) + parseYen(row[idx]);
+    qtys[key] = (qtys[key] || 0) + parseNum(row[qidx]);
   }
-  return Object.keys(sums).map(k => [labels[k], sums[k]]).sort((a,b) => b[1]-a[1]);
+  return Object.keys(sums).map(k => [labels[k], sums[k], qtys[k]]).sort((a,b) => b[1]-a[1]);
 }
 
 function aggregateMajorCategories(metric) {
   const idx = getMetricIndex(metric);
-  const map = {};
+  const qidx = getQuantityIndex(metric);
+  const map = {}, qmap = {};
   for (const row of rawData) {
     const { major } = classifyRow(row);
-    map[major] = (map[major] || 0) + parseYen(row[idx]);
+    map[major]  = (map[major]  || 0) + parseYen(row[idx]);
+    qmap[major] = (qmap[major] || 0) + parseNum(row[qidx]);
   }
-  return Object.entries(map).sort((a,b) => b[1]-a[1]);
+  return Object.entries(map).sort((a,b) => b[1]-a[1]).map(([major, val]) => [major, val, qmap[major]]);
 }
 
 function aggregateMinorCategories(metric, majorFilter) {
   const idx = getMetricIndex(metric);
-  const map = {};
-  const majorMap = {}; // minor → major for color mapping
+  const qidx = getQuantityIndex(metric);
+  const map = {}, qmap = {}, majorMap = {};
   for (const row of rawData) {
     const { major, minor } = classifyRow(row);
     if (majorFilter !== '__ALL__' && major !== majorFilter) continue;
-    map[minor] = (map[minor] || 0) + parseYen(row[idx]);
+    map[minor]  = (map[minor]  || 0) + parseYen(row[idx]);
+    qmap[minor] = (qmap[minor] || 0) + parseNum(row[qidx]);
     majorMap[minor] = major;
   }
   return Object.entries(map)
     .sort((a,b) => b[1]-a[1])
-    .map(([minor, val]) => ({ minor, val, major: majorMap[minor] }));
+    .map(([minor, val]) => ({ minor, val, qty: qmap[minor], major: majorMap[minor] }));
 }
 
 // ====== File Load ======
@@ -507,7 +520,7 @@ function renderProducts() {
   const data = aggregateProducts(metric, topN);
   document.getElementById('productChartTitle').textContent =
     `商品名別売上 上位${topN}件（${METRIC_LABELS[metric]}）`;
-  renderBarChart('productChart', data.map(([n])=>n), data.map(([,v])=>v),
+  renderBarChart('productChart', data.map(([n])=>n), data.map(([,v])=>v), data.map(([,,q])=>q),
     METRIC_LABELS[metric], PALETTE, true);
 }
 
@@ -516,7 +529,7 @@ function renderBrands() {
   const data = aggregateBrands(metric);
   document.getElementById('brandChartTitle').textContent =
     `ブランド別売上 全${data.length}件（${METRIC_LABELS[metric]}）`;
-  renderBarChart('brandChart', data.map(([n])=>n), data.map(([,v])=>v),
+  renderBarChart('brandChart', data.map(([n])=>n), data.map(([,v])=>v), data.map(([,,q])=>q),
     METRIC_LABELS[metric], PALETTE, false);
 }
 
@@ -528,6 +541,7 @@ function renderMajorCategories() {
 
   const labels = data.map(([n]) => n);
   const values = data.map(([, v]) => v);
+  const qtys   = data.map(([,, q]) => q);
   // 選択中の大カテゴリを強調（未選択は少し薄く）
   const colors = labels.map(cat => {
     const base = majorColor(cat);
@@ -541,6 +555,26 @@ function renderMajorCategories() {
   const canvas = document.getElementById(canvasId);
   canvas.style.height = h + 'px'; canvas.height = h;
 
+  const majorQtyPlugin = {
+    id: 'qtyLabelsMajor',
+    afterDatasetsDraw(chart) {
+      const { ctx: c, scales: { x } } = chart;
+      chart.data.datasets[0].data.forEach((val, i) => {
+        const qty = qtys[i];
+        if (qty == null) return;
+        const meta = chart.getDatasetMeta(0);
+        const bar = meta.data[i];
+        c.save();
+        c.fillStyle = '#546e7a';
+        c.font = '10px "Segoe UI", Meiryo, sans-serif';
+        c.textAlign = 'left';
+        c.textBaseline = 'middle';
+        c.fillText(qty.toLocaleString() + '個', x.getPixelForValue(val) + 5, bar.y);
+        c.restore();
+      });
+    }
+  };
+
   charts[canvasId] = new Chart(ctx, {
     type: 'bar',
     data: { labels, datasets: [{ label: METRIC_LABELS[metric], data: values, backgroundColor: colors, borderRadius: 4, borderSkipped: false }] },
@@ -548,7 +582,10 @@ function renderMajorCategories() {
       indexAxis: 'y', responsive: true, maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: c => ' ' + formatYen(c.parsed.x), title: c => labels[c[0].dataIndex] } }
+        tooltip: { callbacks: {
+          label: c => [' ' + formatYen(c.parsed.x), ' ' + qtys[c.dataIndex].toLocaleString() + '個'],
+          title: c => labels[c[0].dataIndex]
+        }}
       },
       scales: {
         x: { ticks: { callback: v => '¥'+(v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v), font:{size:11} }, grid:{color:'#eceff1'} },
@@ -558,13 +595,14 @@ function renderMajorCategories() {
         if (!elements.length) return;
         const idx = elements[0].index;
         selectedMajor = labels[idx];
-        renderMajorCategories();   // 強調更新
+        renderMajorCategories();
         renderMajorDetail();
       },
       onHover(event, elements) {
         event.native.target.style.cursor = elements.length ? 'pointer' : 'default';
       }
-    }
+    },
+    plugins: [majorQtyPlugin]
   });
 }
 
@@ -597,7 +635,7 @@ function renderMajorDetail() {
 
   const colors = getMinorColors(selectedMajor, minorData.length);
   renderBarChart('majorDetailChart',
-    minorData.map(d => d.minor), minorData.map(d => d.val),
+    minorData.map(d => d.minor), minorData.map(d => d.val), minorData.map(d => d.qty),
     METRIC_LABELS[metric], colors, false);
 }
 
@@ -609,12 +647,12 @@ function renderMinorCategories() {
   document.getElementById('minorChartTitle').textContent =
     `小カテゴリ別売上 ― ${suffix}（${METRIC_LABELS[metric]}）`;
   const colors = data.map(d => majorColor(d.major));
-  renderBarChart('minorChart', data.map(d=>d.minor), data.map(d=>d.val),
+  renderBarChart('minorChart', data.map(d=>d.minor), data.map(d=>d.val), data.map(d=>d.qty),
     METRIC_LABELS[metric], colors, false);
 }
 
 // ====== Chart renderer ======
-function renderBarChart(canvasId, labels, values, metricLabel, colorArg, truncate) {
+function renderBarChart(canvasId, labels, values, quantities, metricLabel, colorArg, truncate) {
   const ctx = document.getElementById(canvasId).getContext('2d');
   if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
 
@@ -631,6 +669,26 @@ function renderBarChart(canvasId, labels, values, metricLabel, colorArg, truncat
   canvas.style.height = h + 'px';
   canvas.height = h;
 
+  const qtyPlugin = quantities && quantities.length ? {
+    id: 'qtyLabels_' + canvasId,
+    afterDatasetsDraw(chart) {
+      const { ctx: c, scales: { x } } = chart;
+      chart.data.datasets[0].data.forEach((val, i) => {
+        const qty = quantities[i];
+        if (qty == null) return;
+        const meta = chart.getDatasetMeta(0);
+        const bar = meta.data[i];
+        c.save();
+        c.fillStyle = '#546e7a';
+        c.font = '10px "Segoe UI", Meiryo, sans-serif';
+        c.textAlign = 'left';
+        c.textBaseline = 'middle';
+        c.fillText(qty.toLocaleString() + '個', x.getPixelForValue(val) + 5, bar.y);
+        c.restore();
+      });
+    }
+  } : null;
+
   charts[canvasId] = new Chart(ctx, {
     type: 'bar',
     data: {
@@ -643,7 +701,12 @@ function renderBarChart(canvasId, labels, values, metricLabel, colorArg, truncat
         legend: { display: false },
         tooltip: {
           callbacks: {
-            label: c => ' ' + formatYen(c.parsed.x),
+            label: c => {
+              const lines = [' ' + formatYen(c.parsed.x)];
+              if (quantities && quantities[c.dataIndex] != null)
+                lines.push(' ' + quantities[c.dataIndex].toLocaleString() + '個');
+              return lines;
+            },
             title: c => labels[c[0].dataIndex],
           }
         }
@@ -658,7 +721,8 @@ function renderBarChart(canvasId, labels, values, metricLabel, colorArg, truncat
         },
         y: { ticks: { font: { size: 11 } }, grid: { display: false } }
       }
-    }
+    },
+    plugins: qtyPlugin ? [qtyPlugin] : []
   });
 }
 
