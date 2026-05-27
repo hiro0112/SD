@@ -268,13 +268,18 @@ function aggregateProducts(metric, topN) {
 
 function aggregateBrands(metric) {
   const idx = getMetricIndex(metric);
-  const map = {};
+  const sumMap   = {}; // key: lowercase → 合計金額
+  const labelMap = {}; // key: lowercase → 表示名（最初に出現した表記）
   for (const row of rawData) {
     const brand = row[4] || '不明';
+    const key   = brand.toLowerCase();
     const val   = parseYen(row[idx]);
-    map[brand]  = (map[brand] || 0) + val;
+    if (labelMap[key] === undefined) labelMap[key] = brand;
+    sumMap[key] = (sumMap[key] || 0) + val;
   }
-  return Object.entries(map).sort((a, b) => b[1] - a[1]);
+  return Object.keys(sumMap)
+    .map(key => [labelMap[key], sumMap[key]])
+    .sort((a, b) => b[1] - a[1]);
 }
 
 // ---- Render ----
