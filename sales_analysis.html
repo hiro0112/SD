@@ -569,7 +569,7 @@ function renderMajorCategories() {
         c.font = '10px "Segoe UI", Meiryo, sans-serif';
         c.textAlign = 'left';
         c.textBaseline = 'middle';
-        c.fillText(qty.toLocaleString() + '個', x.getPixelForValue(val) + 5, bar.y);
+        c.fillText(formatYen(val) + '  ' + qty.toLocaleString() + '個', x.getPixelForValue(val) + 5, bar.y);
         c.restore();
       });
     }
@@ -683,7 +683,7 @@ function renderBarChart(canvasId, labels, values, quantities, metricLabel, color
         c.font = '10px "Segoe UI", Meiryo, sans-serif';
         c.textAlign = 'left';
         c.textBaseline = 'middle';
-        c.fillText(qty.toLocaleString() + '個', x.getPixelForValue(val) + 5, bar.y);
+        c.fillText(formatYen(val) + '  ' + qty.toLocaleString() + '個', x.getPixelForValue(val) + 5, bar.y);
         c.restore();
       });
     }
